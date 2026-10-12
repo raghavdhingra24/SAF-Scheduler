@@ -3,12 +3,10 @@
 #include <vector>
 #include <ucontext.h>
 
-using namespace std;
-
 TCB* current_thread = nullptr;
 ucontext_t main_context;
 
-vector<TCB*> threads;
+std :: vector<TCB*> threads;
 int current_index = -1;
 
 //Stck size
