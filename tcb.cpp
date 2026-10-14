@@ -3,29 +3,30 @@
 #include <vector>
 #include <ucontext.h>
 
-TCB* current_thread = nullptr;
-ucontext_t main_context;
-
-std :: vector<TCB*> threads;
-int current_index = -1;
-
-//Stck size
-const size_t STACK_SIZE = 64 * 1024;
-
 // Thread states
 enum State {
     READY,
     RUNNING,
     FINISHED
 };
-
-// Thread Control Block
 struct TCB {
     int id;
     ucontext_t context;
     void* stack;
     State state;
 };
+
+TCB* current_thread = nullptr;
+ucontext_t main_context;
+
+std::vector<TCB*> threads;
+int current_index = -1;
+
+//Stck size
+const size_t STACK_SIZE = 64 * 1024;
+
+
+// Thread Control Block
 
 void init_thread(TCB* t, int id, void (*func)()) {
     t->id = id;
@@ -87,17 +88,6 @@ void context_switch(TCB* next_thread) {
     }
 }
 
-void thread_yield() {
-    if (current_thread == nullptr) {
-        return;
-    }
-
-    current_thread->state = READY;
-
-    // Give control back to the scheduler
-    scheduler();
-}
-
 void scheduler() {
     int n = threads.size();
 
@@ -121,4 +111,15 @@ void scheduler() {
         perror("setcontext failed");
         exit(EXIT_FAILURE);
     }
+}
+
+void thread_yield() {
+    if (current_thread == nullptr) {
+        return;
+    }
+
+    current_thread->state = READY;
+
+    // Give control back to the scheduler
+    scheduler();
 }
