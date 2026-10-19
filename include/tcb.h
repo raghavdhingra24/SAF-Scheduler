@@ -16,9 +16,9 @@ extern "C" {
 #endif
 
 typedef enum {
-    READY,
-    RUNNING,
-    FINISHED
+    SAF_READY,
+    SAF_RUNNING,
+    SAF_FINISHED
 } State;
 
 typedef struct TCB {
@@ -48,6 +48,17 @@ void thread_yield(void);
 
 // Free allocated stacks and reset scheduler state
 void cleanup_threads(void);
+
+/* Stage 2 API — implemented in task 03/04
+typedef struct TCB TCB;
+typedef enum { SAF_READY, SAF_RUNNING, SAF_FINISHED } saf_state_t;
+int  thread_create(void (*fn)(void *), void *arg);
+void thread_yield(void);
+void thread_exit(void);
+int  scheduler_run(void);
+typedef struct { long switches, preemptions, deferred, ticks, max_queue_len; } saf_stats_t;
+void saf_get_stats(saf_stats_t *out);
+*/
 
 #ifdef __cplusplus
 }

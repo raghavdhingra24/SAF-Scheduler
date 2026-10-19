@@ -15,7 +15,7 @@ static void thread_wrapper(void) {
         current_thread->entry_func();
     }
     if (current_thread) {
-        current_thread->state = FINISHED;
+        current_thread->state = SAF_FINISHED;
     }
     // Yield to the scheduler to switch to next ready thread or return to main
     scheduler();
@@ -24,7 +24,7 @@ static void thread_wrapper(void) {
 void init_thread(TCB* t, int id, void (*func)(void)) {
     memset(t, 0, sizeof(*t));
     t->id = id;
-    t->state = READY;
+    t->state = SAF_READY;
     t->entry_func = func;
 
     // Allocate stack memory aligned to 16-bytes for x86-64 ABI requirements
@@ -63,11 +63,11 @@ void context_switch(TCB* next_thread) {
     TCB* previous_thread = current_thread;
 
     current_thread = next_thread;
-    current_thread->state = RUNNING;
+    current_thread->state = SAF_RUNNING;
 
     if (previous_thread != nullptr) {
-        if (previous_thread->state != FINISHED) {
-            previous_thread->state = READY;
+        if (previous_thread->state != SAF_FINISHED) {
+            previous_thread->state = SAF_READY;
         }
 
         if (swapcontext(
@@ -99,7 +99,7 @@ void scheduler(void) {
     for (int i = 1; i <= n; i++) {
         int next_index = (current_index + i) % n;
 
-        if (threads[next_index]->state == READY) {
+        if (threads[next_index]->state == SAF_READY) {
             current_index = next_index;
 
             // Switch execution to the selected thread.
@@ -122,7 +122,7 @@ void thread_yield(void) {
         return;
     }
 
-    current_thread->state = READY;
+    current_thread->state = SAF_READY;
 
     scheduler();
 }
