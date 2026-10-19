@@ -1,23 +1,17 @@
 CC ?= gcc
-CXX ?= g++
-CFLAGS ?= -Wall -Wextra -Werror -g -pthread -Iinclude
-CXXFLAGS ?= -Wall -Wextra -Werror -g -pthread -Iinclude
+CFLAGS ?= -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g -pthread -Iinclude
 
 TARGET = scheduler
-SRCS_C = main.c
-SRCS_CXX = src/tcb.cpp
-OBJS = $(SRCS_C:.c=.o) $(SRCS_CXX:.cpp=.o)
+SRCS = main.c src/tcb.c src/runqueue.c
+OBJS = $(SRCS:.c=.o)
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS)
 
-%.o: %.c include/tcb.h
+%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-
-%.o: %.cpp include/tcb.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 run: $(TARGET)
 	./$(TARGET)
