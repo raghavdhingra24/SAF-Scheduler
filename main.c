@@ -6,43 +6,34 @@
 static int g_infinite = 0;
 static int g_max_iterations = 4;
 
-void thread1(void) {
+static void worker(void *arg) {
+    int id = *(int *)arg;
     int count = 0;
     while (g_infinite || count < g_max_iterations) {
         count++;
-        printf("Thread 1 (ID: 1) - iteration %d\n", count);
+        printf("Thread %d (ID: %d) - iteration %d\n", id, id, count);
         thread_yield();
     }
 }
 
-void thread2(void) {
-    int count = 0;
-    while (g_infinite || count < g_max_iterations) {
-        count++;
-        printf("Thread 2 (ID: 2) - iteration %d\n", count);
-        thread_yield();
-    }
+static void usage(const char *prog) {
+    fprintf(stderr, "Usage: %s [-i|--infinite] [iterations]\n", prog);
 }
 
-void thread3(void) {
-    int count = 0;
-    while (g_infinite || count < g_max_iterations) {
-        count++;
-        printf("Thread 3 (ID: 3) - iteration %d\n", count);
-        thread_yield();
-    }
-}
-
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--infinite") == 0) {
             g_infinite = 1;
-        } else {
-            int iters = atoi(argv[i]);
-            if (iters > 0) {
-                g_max_iterations = iters;
-            }
+            continue;
         }
+
+        char *end = NULL;
+        long val = strtol(argv[i], &end, 10);
+        if (end == argv[i] || *end != '\0' || val <= 0) {
+            usage(argv[0]);
+            return 1;
+        }
+        g_max_iterations = (int)val;
     }
 
     printf("==================================================\n");
@@ -54,19 +45,25 @@ int main(int argc, char* argv[]) {
         printf("[Config] Running %d iterations per thread\n", g_max_iterations);
     }
 
-    TCB t1, t2, t3;
+    int ids[3] = {1, 2, 3};
 
     printf("[Init] Registering 3 cooperative user threads...\n");
-    init_thread(&t1, 1, thread1);
-    init_thread(&t2, 2, thread2);
-    init_thread(&t3, 3, thread3);
+    for (int i = 0; i < 3; i++) {
+        int rc = thread_create(worker, &ids[i]);
+        if (rc < 0) {
+            fprintf(stderr, "thread_create failed: %d\n", rc);
+            return 1;
+        }
+    }
 
     printf("[Run] Starting scheduler...\n");
-    scheduler();
+    int rc = scheduler_run();
+    if (rc < 0) {
+        fprintf(stderr, "scheduler_run failed: %d\n", rc);
+        return 1;
+    }
 
     printf("[Done] All user threads completed successfully.\n");
-    printf("[Cleanup] Freeing thread stack allocations...\n");
-    cleanup_threads();
     printf("[Cleanup] Memory cleanup complete. Stage 1 milestone passed!\n");
 
     return 0;
