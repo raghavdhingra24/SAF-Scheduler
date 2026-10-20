@@ -1,29 +1,65 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g -pthread -Iinclude
+CFLAGS ?= -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g -pthread -Iinclude -Isrc
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    CFLAGS += -D_DARWIN_C_SOURCE -D_XOPEN_SOURCE=600 -Wno-deprecated-declarations -DMAP_STACK=0
+endif
+
+DEBUG ?= 1
+ifeq ($(DEBUG),0)
+    CFLAGS += -O2 -DNDEBUG
+endif
 
 TARGET = scheduler
-SRCS = main.c src/tcb.c src/runqueue.c
-OBJS = $(SRCS:.c=.o)
+SRC = $(wildcard src/*.c)
+LIB_OBJS = $(patsubst src/%.c, build/%.o, $(SRC))
 
-all: $(TARGET)
+MAIN_SRC = main.c
+MAIN_OBJ = build/main.o
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
+TEST_SRCS = $(wildcard tests/test_*.c)
+TEST_BINS = $(patsubst tests/%.c, build/tests/%, $(TEST_SRCS))
 
-%.o: %.c
+# TEMP: rule for tcb.cpp removed in task 03 (converted to src/tcb.c)
+
+all: $(TARGET) $(TEST_BINS)
+
+$(TARGET): $(MAIN_OBJ) $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+build/%.o: src/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-run: $(TARGET)
-	./$(TARGET)
+build/main.o: $(MAIN_SRC) | build
+	$(CC) $(CFLAGS) -c $< -o $@
 
-test: $(TARGET)
-	./$(TARGET)
+build/tests/%.o: tests/%.c | build/tests
+	$(CC) $(CFLAGS) -c $< -o $@
 
-test-mem: $(TARGET)
+build/tests/%: build/tests/%.o $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+build:
+	mkdir -p build
+
+build/tests:
+	mkdir -p build/tests
+
+test: $(TARGET) $(TEST_BINS)
+	@for t in $(TEST_BINS); do \
+		echo "Running $$t..."; \
+		./$$t || exit 1; \
+	done
+
+test-mem: $(TARGET) $(TEST_BINS)
 	@chmod +x scripts/test_mem.sh
 	./scripts/test_mem.sh
 
-clean:
-	rm -f $(OBJS) $(TARGET)
+test-long:
+	@echo "test-long target placeholder for Task 08"
 
-.PHONY: all run test test-mem clean
+clean:
+	rm -rf build $(TARGET)
+
+.PHONY: all test test-mem test-long clean

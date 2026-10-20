@@ -1,4 +1,5 @@
 #include "runqueue.h"
+#include "sched_internal.h"
 
 #include <assert.h>
 #include <errno.h>
