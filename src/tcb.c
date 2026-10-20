@@ -2,11 +2,13 @@
 #include "sched_internal.h"
 #include "runqueue.h"
 #include "preempt.h"
+#include "timer.h"
 
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -19,6 +21,7 @@
 
 #define STACK_SIZE ((size_t)64 * 1024)
 #define SAF_MAX_THREADS 1024
+#define DEFAULT_TICK_US 10000L
 
 TCB *current = NULL;
 ucontext_t sched_ctx;
@@ -201,6 +204,29 @@ void thread_exit(void) {
     /* unreachable */
 }
 
+/* SAF_TICK_US: default 10000, minimum 100; anything else invalid
+ * (non-numeric, trailing garbage, below minimum) falls back to the
+ * default rather than erroring (per the public API's documented
+ * behavior). */
+static long read_tick_us(void) {
+    const char *env = getenv("SAF_TICK_US");
+    if (env == NULL) {
+        return DEFAULT_TICK_US;
+    }
+
+    char *end = NULL;
+    long val = strtol(env, &end, 10);
+    if (end == env || *end != '\0' || val < 100) {
+        return DEFAULT_TICK_US;
+    }
+    return val;
+}
+
+static int preempt_is_enabled(void) {
+    const char *env = getenv("SAF_PREEMPT");
+    return !(env != NULL && strcmp(env, "0") == 0);
+}
+
 int scheduler_run(void) {
     if (current != NULL) {
         return -EBUSY;
@@ -227,7 +253,18 @@ int scheduler_run(void) {
     sched_ctx.uc_link = &main_ctx;
     makecontext(&sched_ctx, sched_loop, 0);
 
+    if (preempt_is_enabled()) {
+        rc = timer_arm(read_tick_us());
+        if (rc != 0) {
+            free_mapped_stack(sched_stack.map, sched_stack.map_len, sched_stack.vg_id);
+            sig_unblock_timer();
+            return rc;
+        }
+    }
+
     swapcontext(&main_ctx, &sched_ctx);
+
+    timer_disarm();
 
     free_mapped_stack(sched_stack.map, sched_stack.map_len, sched_stack.vg_id);
     rq_destroy();
@@ -245,7 +282,7 @@ saf_state_t saf_debug_current_state(void) {
 }
 #endif
 
-/* Stub: real counters are wired up in task 06/07. */
+/* Stub: preemption/deferred counters are wired up in task 07. */
 void saf_get_stats(saf_stats_t *out) {
     if (out == NULL) {
         return;
@@ -253,6 +290,6 @@ void saf_get_stats(saf_stats_t *out) {
     out->switches = g_switches;
     out->preemptions = 0;
     out->deferred = 0;
-    out->ticks = 0;
+    out->ticks = timer_ticks();
     out->max_queue_len = 0;
 }
