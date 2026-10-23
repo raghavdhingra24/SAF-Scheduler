@@ -1,6 +1,8 @@
 #include "preempt.h"
 #include "preempt_internal.h"
+#include "tcb.h"
 
+#include <assert.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,34 +31,52 @@ void sig_unblock_timer(void) {
     sigprocmask(SIG_UNBLOCK, &vtalrm_set, NULL);
 }
 
-/* Stage 2 task 05 replaces the guard below with a real
- * preempt_count/preempt_pending implementation (I7). */
 void preempt_disable(void) {
+    preempt_count++;
 }
 
 void preempt_enable(void) {
+    assert(preempt_count > 0);
+    preempt_count--;
+    if (preempt_count == 0 && preempt_pending) {
+        preempt_pending = 0;
+        thread_yield();
+    }
 }
 
 int saf_printf(const char *fmt, ...) {
+    preempt_disable();
     va_list ap;
     va_start(ap, fmt);
     int ret = vprintf(fmt, ap);
     va_end(ap);
+    preempt_enable();
     return ret;
 }
 
 void *saf_malloc(size_t n) {
-    return malloc(n);
+    preempt_disable();
+    void *p = malloc(n);
+    preempt_enable();
+    return p;
 }
 
 void *saf_calloc(size_t n, size_t sz) {
-    return calloc(n, sz);
+    preempt_disable();
+    void *p = calloc(n, sz);
+    preempt_enable();
+    return p;
 }
 
 void *saf_realloc(void *p, size_t n) {
-    return realloc(p, n);
+    preempt_disable();
+    void *res = realloc(p, n);
+    preempt_enable();
+    return res;
 }
 
 void saf_free(void *p) {
+    preempt_disable();
     free(p);
+    preempt_enable();
 }
