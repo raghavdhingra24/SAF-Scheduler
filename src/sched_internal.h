@@ -1,6 +1,7 @@
 #ifndef SCHED_INTERNAL_H
 #define SCHED_INTERNAL_H
 
+#include <signal.h>
 #include <stddef.h>
 #include <ucontext.h>
 
@@ -25,7 +26,17 @@ struct TCB {
 extern TCB *current;
 extern ucontext_t sched_ctx;
 
+/* g_switches is written only from sched_loop, never from signal context,
+ * so a plain long is fine. g_preemptions/g_deferred are written only
+ * inside the signal handler (on_tick -> sched_on_tick), so they are
+ * volatile sig_atomic_t (I6). */
 extern long g_switches;
+extern volatile sig_atomic_t g_preemptions;
+extern volatile sig_atomic_t g_deferred;
+
+/* Called by timer.c's on_tick after it counts the tick (I6, I7): forces
+ * a preemption of the RUNNING thread, or defers it if preempt_count > 0. */
+void sched_on_tick(void);
 
 #ifndef NDEBUG
 /* Debug-only instrumentation used by tests/test_coop.c. */

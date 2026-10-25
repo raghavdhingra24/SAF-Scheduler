@@ -2,6 +2,7 @@
 #include "sched_internal.h"
 #include "runqueue.h"
 #include "preempt.h"
+#include "preempt_internal.h"
 #include "timer.h"
 
 #include <assert.h>
@@ -26,6 +27,8 @@
 TCB *current = NULL;
 ucontext_t sched_ctx;
 long g_switches = 0;
+volatile sig_atomic_t g_preemptions = 0;
+volatile sig_atomic_t g_deferred = 0;
 
 #ifndef NDEBUG
 long g_tcb_destroyed = 0;
@@ -101,7 +104,9 @@ static void tramp(void) {
  * context switches anywhere are thread -> sched_ctx and sched_ctx ->
  * thread (I1); re-enqueueing happens only here, after the switch back
  * has completed (I4); only this loop frees a thread, after switching
- * off it (I5). */
+ * off it (I5). preempt_pending is cleared every time a thread is
+ * switched in, so a deferred preemption from one thread's turn can't
+ * leak into the next thread's turn. */
 static void sched_loop(void) {
     TCB *t;
     while ((t = rq_dequeue()) != NULL) {
@@ -109,6 +114,7 @@ static void sched_loop(void) {
 
         current = t;
         t->state = SAF_RUNNING;
+        preempt_pending = 0;
         g_switches++;
 
         swapcontext(&sched_ctx, &t->ctx);
@@ -120,6 +126,26 @@ static void sched_loop(void) {
             tcb_destroy(t);
         }
     }
+}
+
+/* Called from timer.c's on_tick, i.e. from the signal handler (I6): only
+ * reads current/state, checks preempt_count, sets preempt_pending,
+ * increments counters, and calls swapcontext. No stdio, malloc, locks,
+ * or exit. Calling swapcontext from a signal handler is not strictly
+ * async-signal-safe per POSIX, but is the standard, validated technique
+ * for user-level preemption on Linux/glibc (R2). */
+void sched_on_tick(void) {
+    if (current == NULL || current->state != SAF_RUNNING) {
+        return; /* between threads, on the scheduler's own stack */
+    }
+    if (preempt_count > 0) {
+        preempt_pending = 1;
+        g_deferred++;
+        return;
+    }
+    g_preemptions++;
+    current->state = SAF_READY;
+    swapcontext(&current->ctx, &sched_ctx); /* resumes here when rescheduled */
 }
 
 int thread_create(void (*fn)(void *), void *arg) {
@@ -282,14 +308,13 @@ saf_state_t saf_debug_current_state(void) {
 }
 #endif
 
-/* Stub: preemption/deferred counters are wired up in task 07. */
 void saf_get_stats(saf_stats_t *out) {
     if (out == NULL) {
         return;
     }
     out->switches = g_switches;
-    out->preemptions = 0;
-    out->deferred = 0;
+    out->preemptions = g_preemptions;
+    out->deferred = g_deferred;
     out->ticks = timer_ticks();
     out->max_queue_len = 0;
 }
