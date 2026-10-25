@@ -1,11 +1,10 @@
 #include "timer.h"
+#include "sched_internal.h"
 
 #include <errno.h>
 #include <signal.h>
 #include <sys/time.h>
 
-/* This task only counts ticks; the handler is wired into the scheduler
- * (sched_on_tick) in task 07. */
 static volatile sig_atomic_t g_ticks = 0;
 static struct sigaction prev_action;
 static int armed = 0;
@@ -15,6 +14,7 @@ static void on_tick(int sig, siginfo_t *si, void *uc) {
     (void)si;
     (void)uc;
     g_ticks++;
+    sched_on_tick();
 }
 
 int timer_arm(long usec) {
