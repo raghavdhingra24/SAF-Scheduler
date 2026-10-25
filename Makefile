@@ -3,7 +3,7 @@ CFLAGS ?= -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -g -pthread -Iinclude -Is
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    CFLAGS += -D_DARWIN_C_SOURCE -D_XOPEN_SOURCE=600 -Wno-deprecated-declarations -DMAP_STACK=0
+    CFLAGS += -D_DARWIN_C_SOURCE -D_XOPEN_SOURCE=600 -Wno-deprecated-declarations -DMAP_STACK=0 -Wno-unused-parameter
 endif
 
 DEBUG ?= 1
