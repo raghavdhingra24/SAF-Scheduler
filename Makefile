@@ -56,8 +56,8 @@ test-mem: $(TARGET) $(TEST_BINS)
 	@chmod +x scripts/test_mem.sh
 	./scripts/test_mem.sh
 
-test-long:
-	@echo "test-long target placeholder for Task 08"
+test-long: build/tests/test_mixed
+	SAF_MIXED_TICKS=30000 ./build/tests/test_mixed
 
 clean:
 	rm -rf build $(TARGET)
