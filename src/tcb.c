@@ -36,7 +36,12 @@ _Thread_local volatile sig_atomic_t g_deferred = 0;
 
 // Worker pool data structures
 static int g_num_workers = 1;
-static WSDeque **g_deques = NULL;
+static WSDeque **g_light_deques = NULL;
+static WSDeque **g_heavy_deques = NULL;
+
+/* A thread needs this many consecutive opposite-signal switches before its
+ * classification flips, to avoid thrashing between the two deques. */
+#define CLASS_STREAK_THRESHOLD 3
 
 // Termination and activity tracking
 static _Atomic int g_total_threads_created = 0;
@@ -116,19 +121,48 @@ static void tramp(void) {
     thread_exit();
 }
 
-// Try to pop from local deque first, or steal from peers if empty
+/* Classifies t based on how it was just switched out: calling code sets
+ * `signal` to the class implied by this switch (LIGHT for a voluntary
+ * yield, HEAVY for a forced timer preemption). Only flips t->class after
+ * CLASS_STREAK_THRESHOLD consecutive signals disagree with the current
+ * class, so classification doesn't thrash on a single outlier switch.
+ * Must be called only while t == current, strictly before the switch
+ * that publishes t to a shared deque (I4-style ownership argument), so
+ * plain (non-atomic) fields are safe here. */
+static void classify_on_signal(TCB *t, saf_class_t observed) {
+    if (t->class == observed) {
+        t->class_streak = 0;
+        return;
+    }
+    t->class_streak++;
+    if (t->class_streak >= CLASS_STREAK_THRESHOLD) {
+        t->class = observed;
+        t->class_streak = 0;
+    }
+}
+
+// Try to pop from local deques first (light before heavy), or steal from peers if empty
 static TCB *sched_next_thread(int my_id) {
-    // 1. Try local deque (front gives fair FIFO round-robin)
-    TCB *t = deque_steal(g_deques[my_id]);
+    // 1. Try local deques: prefer light (cooperative) work over heavy.
+    TCB *t = deque_steal(g_light_deques[my_id]);
+    if (t != NULL) {
+        return t;
+    }
+    t = deque_steal(g_heavy_deques[my_id]);
     if (t != NULL) {
         return t;
     }
 
-    // 2. Steal from peers (FIFO)
+    // 2. Steal from peers, light then heavy per peer (classification-blind
+    // peer traversal order, unchanged from before).
     if (g_num_workers > 1) {
         for (int i = 1; i < g_num_workers; i++) {
             int victim = (my_id + i) % g_num_workers;
-            t = deque_steal(g_deques[victim]);
+            t = deque_steal(g_light_deques[victim]);
+            if (t != NULL) {
+                return t;
+            }
+            t = deque_steal(g_heavy_deques[victim]);
             if (t != NULL) {
                 return t;
             }
@@ -176,7 +210,9 @@ static void sched_loop(void) {
 
         current = NULL;
         if (t->state == SAF_READY) {
-            deque_push(g_deques[my_id], t);
+            deque_push(t->class == SAF_CLASS_LIGHT ? g_light_deques[my_id]
+                                                     : g_heavy_deques[my_id],
+                       t);
         } else if (t->state == SAF_FINISHED) {
             tcb_destroy(t);
         }
@@ -205,6 +241,7 @@ void sched_on_tick(void) {
     }
     g_preemptions++;
     current->state = SAF_READY;
+    classify_on_signal(current, SAF_CLASS_HEAVY);
     swapcontext(&current->ctx, &sched_ctx); /* resumes here when rescheduled */
 }
 
@@ -253,12 +290,14 @@ int thread_create(void (*fn)(void *), void *arg) {
     t->map = gs.map;
     t->map_len = gs.map_len;
     t->vg_id = gs.vg_id;
+    t->class = SAF_CLASS_LIGHT; /* default: most demo/test threads cooperate */
+    t->class_streak = 0;
 
     makecontext(&t->ctx, tramp, 0);
 
     // If scheduler is already running with deques, push directly to current worker
-    if (g_deques != NULL) {
-        if (!deque_push(g_deques[current_worker_id], t)) {
+    if (g_light_deques != NULL) {
+        if (!deque_push(g_light_deques[current_worker_id], t)) {
             free_mapped_stack(gs.map, gs.map_len, gs.vg_id);
             free(t);
             next_id--;
@@ -280,6 +319,7 @@ void thread_yield(void) {
 
     sig_block_timer();
     current->state = SAF_READY;
+    classify_on_signal(current, SAF_CLASS_LIGHT);
     swapcontext(&current->ctx, &sched_ctx);
     sig_unblock_timer();
 }
@@ -329,25 +369,35 @@ int scheduler_run(void) {
         g_num_workers = num_cores;
     }
 
-    // Allocate worker deques
-    g_deques = malloc((size_t)g_num_workers * sizeof(WSDeque *));
-    if (g_deques == NULL) {
+    // Allocate worker deques: one light + one heavy deque per worker
+    g_light_deques = malloc((size_t)g_num_workers * sizeof(WSDeque *));
+    g_heavy_deques = malloc((size_t)g_num_workers * sizeof(WSDeque *));
+    if (g_light_deques == NULL || g_heavy_deques == NULL) {
+        free(g_light_deques);
+        free(g_heavy_deques);
+        g_light_deques = g_heavy_deques = NULL;
         return -ENOMEM;
     }
     for (int i = 0; i < g_num_workers; i++) {
-        g_deques[i] = deque_create();
-        if (g_deques[i] == NULL) {
-            for (int j = 0; j < i; j++) deque_destroy(g_deques[j]);
-            free(g_deques);
-            g_deques = NULL;
+        g_light_deques[i] = deque_create();
+        g_heavy_deques[i] = deque_create();
+        if (g_light_deques[i] == NULL || g_heavy_deques[i] == NULL) {
+            for (int j = 0; j <= i; j++) {
+                if (g_light_deques[j]) deque_destroy(g_light_deques[j]);
+                if (g_heavy_deques[j]) deque_destroy(g_heavy_deques[j]);
+            }
+            free(g_light_deques);
+            free(g_heavy_deques);
+            g_light_deques = g_heavy_deques = NULL;
             return -ENOMEM;
         }
     }
 
-    // Distribute initial threads across deques (round-robin)
+    // Distribute initial threads across light deques (round-robin); every
+    // never-run thread defaults to SAF_CLASS_LIGHT (see thread_create).
     size_t initial_q_len = (size_t)g_init_count;
     for (int i = 0; i < g_init_count; i++) {
-        deque_push(g_deques[i % g_num_workers], g_init_threads[i]);
+        deque_push(g_light_deques[i % g_num_workers], g_init_threads[i]);
     }
     g_init_count = 0;
 
@@ -380,10 +430,12 @@ int scheduler_run(void) {
 
     // Free all deques
     for (int i = 0; i < g_num_workers; i++) {
-        deque_destroy(g_deques[i]);
+        deque_destroy(g_light_deques[i]);
+        deque_destroy(g_heavy_deques[i]);
     }
-    free(g_deques);
-    g_deques = NULL;
+    free(g_light_deques);
+    free(g_heavy_deques);
+    g_light_deques = g_heavy_deques = NULL;
 
     next_id = 1;
     atomic_store_explicit(&g_total_threads_created, 0, memory_order_relaxed);
@@ -407,4 +459,13 @@ void saf_get_stats(saf_stats_t *out) {
     out->deferred = atomic_load_explicit(&g_total_deferred, memory_order_relaxed);
     out->ticks = timer_ticks();
     out->max_queue_len = (long)g_max_queue_len;
+
+    out->light_count = 0;
+    out->heavy_count = 0;
+    if (g_light_deques != NULL) {
+        for (int i = 0; i < g_num_workers; i++) {
+            out->light_count += (long)deque_size(g_light_deques[i]);
+            out->heavy_count += (long)deque_size(g_heavy_deques[i]);
+        }
+    }
 }
