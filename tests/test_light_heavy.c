@@ -53,7 +53,11 @@ static void light_worker(void *arg) {
 int main(void) {
     setenv("SAF_WORKERS", "1", 1);
     setenv("SAF_PREEMPT", "1", 1);
-    setenv("SAF_TICK_US", "2000", 1);
+    setenv("SAF_TICK_US", "10000", 1); /* default-ish interval: a much shorter
+                                           tick (e.g. 2000us) is unreliable
+                                           under Valgrind's heavy instrumentation,
+                                           same class of issue as test_spin.c
+                                           relying on the library's own default. */
 
     int rc = thread_create(heavy_worker, NULL);
     CHECK(rc > 0);
