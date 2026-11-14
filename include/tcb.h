@@ -16,7 +16,12 @@ void thread_exit(void);                              /* does not return */
 int  scheduler_run(void);                            /* 0 when all threads finished, <0 error */
 
 /* Scheduler counters are cumulative; max_queue_len is the lifetime high-water mark. */
-typedef struct { long switches, preemptions, deferred, ticks, max_queue_len; } saf_stats_t;
+/* light_count/heavy_count are a best-effort snapshot of how many READY
+ * threads currently sit in light vs heavy deques across all workers; only
+ * meaningful while scheduler_run() is active (0/0 otherwise), and do not
+ * include whichever single thread is RUNNING on each worker. */
+typedef struct { long switches, preemptions, deferred, ticks, max_queue_len;
+                 long light_count, heavy_count; } saf_stats_t;
 void saf_get_stats(saf_stats_t *out);
 
 #ifdef __cplusplus

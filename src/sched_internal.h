@@ -7,6 +7,12 @@
 
 #include "tcb.h"
 
+/* Feedback-based local scheduling: a thread is classified LIGHT or HEAVY
+ * based on how it was last switched out (voluntary yield vs forced timer
+ * preemption). Used only to pick which of a worker's own two deques to
+ * prefer next; cross-worker stealing is classification-blind. */
+typedef enum { SAF_CLASS_LIGHT = 0, SAF_CLASS_HEAVY = 1 } saf_class_t;
+
 /* Full definition of the opaque TCB from tcb.h. Private to the library;
  * only tcb.c (and later timer.c) may include this header. */
 struct TCB {
@@ -18,6 +24,8 @@ struct TCB {
     char *map;
     size_t map_len;
     unsigned vg_id;
+    saf_class_t class;     /* current light/heavy classification */
+    int class_streak;      /* consecutive same-signal count (hysteresis) */
 };
 
 // Guarded stack representation with a low-end guard page
