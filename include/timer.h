@@ -10,7 +10,7 @@ extern "C" {
  * sigaction/setitimer failure (sigaction is undone if setitimer fails). */
 int timer_arm(long usec);
 
-/* Disarm the timer and restore the previous SIGVTALRM action. Idempotent. */
+/* Disarm the timer and restore the previous SIGVTALRM action.*/
 void timer_disarm(void);
 
 /* Number of ticks observed so far. */

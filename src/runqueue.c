@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 /* Static ring buffer. No locking, no signal handling: callers hold
- * SIGVTALRM blocked per the header's documented requirement (I2). */
+ * SIGVTALRM blocked per the header's documented requirement (I2 == TODO: add in docs). */
 static TCB **rq_buf = NULL;
 static size_t rq_cap = 0;
 static size_t rq_head = 0;

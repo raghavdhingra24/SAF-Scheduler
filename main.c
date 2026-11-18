@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("==================================================\n");
-    printf("   SAF-Scheduler: Stage 3 M:N Scheduler Test      \n");
+    printf("   SAF-Scheduler:                                 \n");
     printf("==================================================\n");
     const char *workers_env = getenv("SAF_WORKERS");
     printf("[Config] Workers: %s\n", workers_env ? workers_env : "1 (default)");

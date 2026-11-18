@@ -79,12 +79,11 @@ TCB *deque_pop(WSDeque *d) {
 
   // Last element race condition with thief
   if (curr_f == curr_b) {
-    // Compare and Swap
     if (!atomic_compare_exchange_strong(&d->front, &curr_f, curr_f + 1)) {
       elem = NULL; // lost the race; a thief took it
     }
     // Restore back to front so the deque is consistently empty.
-    atomic_store(&d->back, curr_b + 1); // back = front
+    atomic_store(&d->back, curr_b + 1);
   }
   return elem;
 }
@@ -101,7 +100,6 @@ TCB *deque_steal(WSDeque *d) {
 
   TCB *elem = atomic_load(&d->array[curr_f % DEQUE_MAX_SIZE]);
 
-  // Compare and Swap
   if (!atomic_compare_exchange_strong(&d->front, &curr_f, curr_f + 1)) {
     return NULL;
   }
@@ -109,7 +107,7 @@ TCB *deque_steal(WSDeque *d) {
 }
 
 /* Returns an approximate count of elements in the deque. This value may be
- * stale by the time the caller uses it (design choice 4).*/
+ * stale by the time the caller uses it (design choice 4 == TODO in docs).*/
 int64_t deque_size(WSDeque *d) {
   int64_t b = atomic_load(&d->back);
   int64_t f = atomic_load(&d->front);

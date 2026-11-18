@@ -26,7 +26,7 @@ void sig_unblock_timer(void);
 int saf_printf(const char *fmt, ...);
 
 /* malloc/calloc/realloc/free wrapped in the preempt guard;
- * safe to call under preemption (I7). */
+ * safe to call under preemption. */
 void *saf_malloc(size_t n);
 void *saf_calloc(size_t n, size_t sz);
 void *saf_realloc(void *p, size_t n);

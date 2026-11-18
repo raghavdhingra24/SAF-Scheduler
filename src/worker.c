@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdlib.h>
-#include <string.h>
+// #include <string.h>
 #include <unistd.h>
 
 _Thread_local int current_worker_id = 0;

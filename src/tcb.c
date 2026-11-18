@@ -29,7 +29,6 @@
 #define SAF_MAX_THREADS 1024
 #define DEFAULT_TICK_US 10000L
 
-// S3 CHANGE: _Thread_local gives each pthread worker its own private copy.
 _Thread_local TCB *current = NULL;
 _Thread_local ucontext_t sched_ctx;
 _Thread_local long g_switches = 0;
@@ -41,15 +40,11 @@ static int g_num_workers = 1;
 static WSDeque **g_light_deques = NULL;
 static WSDeque **g_heavy_deques = NULL;
 
-/* A thread needs this many consecutive opposite-signal switches before its
- * classification flips, to avoid thrashing between the two deques. */
 #define CLASS_STREAK_THRESHOLD 3
 
-// Termination and activity tracking
 static _Atomic int g_total_threads_created = 0;
 static _Atomic int g_total_threads_finished = 0;
 
-// Global statistics accumulation
 static _Atomic long g_total_switches = 0;
 static _Atomic long g_total_preemptions = 0;
 static _Atomic long g_total_deferred = 0;
@@ -154,9 +149,8 @@ static void classify_on_signal(TCB *t, saf_class_t observed) {
     }
 }
 
-// Try to pop from local deques first (light before heavy), or steal from peers if empty
+// Try to pop from local deques first (light before heavy), or steal from peers (light then heavy) if empty
 static TCB *sched_next_thread(int my_id) {
-    // 1. Try local deques: prefer light (cooperative) work over heavy.
     TCB *t = deque_steal(g_light_deques[my_id]);
     if (t != NULL) {
         return t;
@@ -166,8 +160,6 @@ static TCB *sched_next_thread(int my_id) {
         return t;
     }
 
-    // 2. Steal from peers, light then heavy per peer (classification-blind
-    // peer traversal order, unchanged from before).
     if (g_num_workers > 1) {
         for (int i = 1; i < g_num_workers; i++) {
             int victim = (my_id + i) % g_num_workers;
@@ -185,13 +177,10 @@ static TCB *sched_next_thread(int my_id) {
     return NULL;
 }
 
-// Check if all user threads have finished
 static inline int all_threads_done(void) {
     return atomic_load_explicit(&g_total_threads_finished, memory_order_acquire) ==
            atomic_load_explicit(&g_total_threads_created, memory_order_acquire);
 }
-
-// Stage 3 CHANGE: Removed the original rq_deque with Work Stealing Deque.
 
 /* Runs on sched_ctx's own stack, with SIGVTALRM blocked (I2). The only
  * context switches anywhere are thread -> sched_ctx and sched_ctx ->
@@ -206,13 +195,12 @@ static void sched_loop(void) {
     while (!all_threads_done()) {
         TCB *t = sched_next_thread(my_id);
         if (t == NULL) {
-            /* Deque is empty and no task could be stolen right now.
-             * Yield this OS thread briefly to avoid hogging CPU while peers make progress. */
+            /* Yield this OS thread briefly to avoid hogging CPU while peers make progress. */
             sched_yield();
             continue;
         }
 
-        assert(current == NULL); /* I10: at most one RUNNING thread */
+        assert(current == NULL);
 
         current = t;
         t->state = SAF_RUNNING;
@@ -247,15 +235,14 @@ static void sched_loop(void) {
     atomic_fetch_add_explicit(&g_total_deferred, g_deferred, memory_order_relaxed);
 }
 
-/* Called from timer.c's on_tick, i.e. from the signal handler (I6): only
- * reads current/state, checks preempt_count, sets preempt_pending,
- * increments counters, and calls swapcontext. No stdio, malloc, locks,
- * or exit. Calling swapcontext from a signal handler is not strictly
- * async-signal-safe per POSIX, but is the standard, validated technique
- * for user-level preemption on Linux/glibc (R2). */
+/* Only reads current/state, checks preempt_count, sets preempt_pending,
+ * increments counters, and calls swapcontext. Calling swapcontext from
+ * a signal handler is not strictly async-signal-safe per POSIX,
+ * but is the standard, validated technique for user-level preemption
+ * on Linux/glibc. */
 void sched_on_tick(void) {
     if (current == NULL || current->state != SAF_RUNNING) {
-        return; /* between threads, on the scheduler's own stack */
+        return;
     }
     if (preempt_count > 0) {
         preempt_pending = 1;
@@ -303,7 +290,8 @@ int thread_create(void (*fn)(void *), void *arg) {
     t->ctx.uc_stack.ss_sp = gs.sp;
     t->ctx.uc_stack.ss_size = gs.sp_len;
     t->ctx.uc_stack.ss_flags = 0;
-    t->ctx.uc_link = &sched_ctx; /* safety net; tramp always calls thread_exit() */
+    // safety net; tramp always calls thread_exit()
+    t->ctx.uc_link = &sched_ctx;
     sigaddset(&t->ctx.uc_sigmask, SIGVTALRM);
 
     t->id = next_id++;
@@ -313,7 +301,7 @@ int thread_create(void (*fn)(void *), void *arg) {
     t->map = gs.map;
     t->map_len = gs.map_len;
     t->vg_id = gs.vg_id;
-    t->class = SAF_CLASS_LIGHT; /* default: most demo/test threads cooperate */
+    t->class = SAF_CLASS_LIGHT;
     t->class_streak = 0;
 
     makecontext(&t->ctx, tramp, 0);
@@ -338,7 +326,7 @@ void thread_yield(void) {
     if (current == NULL) {
         return;
     }
-    assert(current->state == SAF_RUNNING); /* I10 */
+    assert(current->state == SAF_RUNNING);
 
     sig_block_timer();
     current->state = SAF_READY;
@@ -355,13 +343,10 @@ void thread_exit(void) {
     sig_block_timer();
     current->state = SAF_FINISHED;
     setcontext(&sched_ctx);
-    /* unreachable */
 }
 
 /* SAF_TICK_US: default 10000, minimum 100; anything else invalid
- * (non-numeric, trailing garbage, below minimum) falls back to the
- * default rather than erroring (per the public API's documented
- * behavior). */
+ * falls back to the default rather than erroring. */
 static long read_tick_us(void) {
     const char *env = getenv("SAF_TICK_US");
     if (env == NULL) {
@@ -417,7 +402,7 @@ int scheduler_run(void) {
     }
 
     // Distribute initial threads across light deques (round-robin); every
-    // never-run thread defaults to SAF_CLASS_LIGHT (see thread_create).
+    // never-run thread defaults to SAF_CLASS_LIGHT.
     size_t initial_q_len = (size_t)g_init_count;
     for (int i = 0; i < g_init_count; i++) {
         deque_push(g_light_deques[i % g_num_workers], g_init_threads[i]);
@@ -427,7 +412,6 @@ int scheduler_run(void) {
     int preempt_on = preempt_is_enabled();
     long tick_us = read_tick_us();
 
-    // Spawn background worker pthreads (Workers 1 .. M-1)
     worker_t *workers = NULL;
     if (g_num_workers > 1) {
         workers = malloc((size_t)(g_num_workers - 1) * sizeof(worker_t));
@@ -436,7 +420,6 @@ int scheduler_run(void) {
         }
     }
 
-    // Calling thread executes as Worker 0
     worker_run_local(0, 0 % num_cores, sched_loop, preempt_on, tick_us);
 
     // Wait for background workers to complete
@@ -451,7 +434,6 @@ int scheduler_run(void) {
         g_max_queue_len = initial_q_len;
     }
 
-    // Free all deques
     for (int i = 0; i < g_num_workers; i++) {
         deque_destroy(g_light_deques[i]);
         deque_destroy(g_heavy_deques[i]);
